@@ -7,7 +7,7 @@ import ResultsSummary from "../components/ResultsSummary";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type Mode = "name" | "company";
+type Mode = "name" | "city" | "id";
 
 interface FileInfo {
   fileId: string;
@@ -38,14 +38,19 @@ interface WizardState {
   step: WizardStep;
   fileA: FileInfo | null;
   fileB: FileInfo | null;
+  // name mode
   colA: string;
   colB: string;
-  // company-mode extras
-  colOrgA: string;
-  colOrgB: string;
+  // city mode
   colNameA: string;
   colNameB: string;
-  useOrgMatch: boolean;
+  colCityA: string;
+  colCityB: string;
+  // id mode
+  colIdA: string;
+  colIdB: string;
+  colLabelB: string;
+  // shared
   threshold: number;
   jobId: string;
   progress: ProgressState;
@@ -60,13 +65,14 @@ type Action =
   | { type: "SET_FILE_B"; file: FileInfo }
   | { type: "SET_COL_A"; col: string }
   | { type: "SET_COL_B"; col: string }
-  | { type: "SET_COL_ORG_A"; col: string }
-  | { type: "SET_COL_ORG_B"; col: string }
   | { type: "SET_COL_NAME_A"; col: string }
   | { type: "SET_COL_NAME_B"; col: string }
-  | { type: "SET_USE_ORG_MATCH"; v: boolean }
+  | { type: "SET_COL_CITY_A"; col: string }
+  | { type: "SET_COL_CITY_B"; col: string }
+  | { type: "SET_COL_ID_A"; col: string }
+  | { type: "SET_COL_ID_B"; col: string }
+  | { type: "SET_COL_LABEL_B"; col: string }
   | { type: "SET_THRESHOLD"; v: number }
-  | { type: "GO_STEP"; step: WizardStep }
   | { type: "START_JOB"; jobId: string }
   | { type: "PROGRESS"; p: Partial<ProgressState> }
   | { type: "COMPLETE"; stats: Stats }
@@ -81,11 +87,13 @@ const initial: WizardState = {
   fileB: null,
   colA: "",
   colB: "",
-  colOrgA: "",
-  colOrgB: "",
   colNameA: "",
   colNameB: "",
-  useOrgMatch: false,
+  colCityA: "",
+  colCityB: "",
+  colIdA: "",
+  colIdB: "",
+  colLabelB: "",
   threshold: 85,
   jobId: "",
   progress: { current: 0, total: 0, stage: "waiting", message: "" },
@@ -103,6 +111,8 @@ function reducer(state: WizardState, action: Action): WizardState {
         fileA: action.file,
         colA: action.file.columns[0] ?? "",
         colNameA: action.file.columns[0] ?? "",
+        colCityA: action.file.columns[1] ?? action.file.columns[0] ?? "",
+        colIdA: action.file.columns[0] ?? "",
         step: "upload_b",
       };
     case "SET_FILE_B":
@@ -111,40 +121,28 @@ function reducer(state: WizardState, action: Action): WizardState {
         fileB: action.file,
         colB: action.file.columns[0] ?? "",
         colNameB: action.file.columns[0] ?? "",
+        colCityB: action.file.columns[1] ?? action.file.columns[0] ?? "",
+        colIdB: action.file.columns[0] ?? "",
+        colLabelB: action.file.columns[0] ?? "",
         step: "configure",
       };
-    case "SET_COL_A":
-      return { ...state, colA: action.col };
-    case "SET_COL_B":
-      return { ...state, colB: action.col };
-    case "SET_COL_ORG_A":
-      return { ...state, colOrgA: action.col };
-    case "SET_COL_ORG_B":
-      return { ...state, colOrgB: action.col };
-    case "SET_COL_NAME_A":
-      return { ...state, colNameA: action.col };
-    case "SET_COL_NAME_B":
-      return { ...state, colNameB: action.col };
-    case "SET_USE_ORG_MATCH":
-      return { ...state, useOrgMatch: action.v };
-    case "SET_THRESHOLD":
-      return { ...state, threshold: action.v };
-    case "GO_STEP":
-      return { ...state, step: action.step };
-    case "START_JOB":
-      return { ...state, step: "running", jobId: action.jobId };
-    case "PROGRESS":
-      return { ...state, progress: { ...state.progress, ...action.p } };
-    case "COMPLETE":
-      return { ...state, step: "results", stats: action.stats };
-    case "ERROR":
-      return { ...state, step: "error", error: action.msg };
-    case "UPLOADING_A":
-      return { ...state, uploadingA: action.v };
-    case "UPLOADING_B":
-      return { ...state, uploadingB: action.v };
-    case "RESET":
-      return { ...initial };
+    case "SET_COL_A":         return { ...state, colA: action.col };
+    case "SET_COL_B":         return { ...state, colB: action.col };
+    case "SET_COL_NAME_A":    return { ...state, colNameA: action.col };
+    case "SET_COL_NAME_B":    return { ...state, colNameB: action.col };
+    case "SET_COL_CITY_A":    return { ...state, colCityA: action.col };
+    case "SET_COL_CITY_B":    return { ...state, colCityB: action.col };
+    case "SET_COL_ID_A":      return { ...state, colIdA: action.col };
+    case "SET_COL_ID_B":      return { ...state, colIdB: action.col };
+    case "SET_COL_LABEL_B":   return { ...state, colLabelB: action.col };
+    case "SET_THRESHOLD":     return { ...state, threshold: action.v };
+    case "START_JOB":         return { ...state, step: "running", jobId: action.jobId };
+    case "PROGRESS":          return { ...state, progress: { ...state.progress, ...action.p } };
+    case "COMPLETE":          return { ...state, step: "results", stats: action.stats };
+    case "ERROR":             return { ...state, step: "error", error: action.msg };
+    case "UPLOADING_A":       return { ...state, uploadingA: action.v };
+    case "UPLOADING_B":       return { ...state, uploadingB: action.v };
+    case "RESET":             return { ...initial };
   }
 }
 
@@ -168,23 +166,36 @@ async function uploadFile(file: File): Promise<FileInfo> {
   };
 }
 
+// ── Mode metadata ─────────────────────────────────────────────────────────────
+
+const MODE_META = {
+  name: {
+    title: "Name Match",
+    desc: "Fuzzy match on a single name column using TF-IDF + RapidFuzz.",
+    endpoint: "/api/match/start/name",
+  },
+  city: {
+    title: "Name + City Match",
+    desc: "Fuzzy name match boosted by city (75% name · 25% city).",
+    endpoint: "/api/match/start/city",
+  },
+  id: {
+    title: "ID Match",
+    desc: "Exact match on an identifier column — org numbers, ISRCs, customer IDs, etc.",
+    endpoint: "/api/match/start/id",
+  },
+};
+
 // ── Sub-components ────────────────────────────────────────────────────────────
 
 function StepIndicator({ step }: { step: WizardStep }) {
-  const steps: { id: WizardStep; label: string }[] = [
-    { id: "upload_a", label: "File A" },
-    { id: "upload_b", label: "File B" },
-    { id: "configure", label: "Configure" },
-    { id: "running", label: "Running" },
-    { id: "results", label: "Results" },
-  ];
-  const order = ["upload_a", "upload_b", "configure", "running", "results"];
-  const currentIdx = order.indexOf(step);
-
+  const steps = ["upload_a", "upload_b", "configure", "running", "results"];
+  const labels = ["File A", "File B", "Configure", "Running", "Results"];
+  const currentIdx = steps.indexOf(step);
   return (
     <div className="flex items-center gap-2 mb-10">
       {steps.map((s, i) => (
-        <div key={s.id} className="flex items-center gap-2">
+        <div key={s} className="flex items-center gap-2">
           <div
             className={[
               "w-6 h-6 rounded-full flex items-center justify-center font-mono text-xs font-semibold",
@@ -197,12 +208,8 @@ function StepIndicator({ step }: { step: WizardStep }) {
           >
             {i < currentIdx ? "✓" : i + 1}
           </div>
-          <span
-            className={`font-mono text-xs hidden sm:inline ${
-              i === currentIdx ? "text-text-primary" : "text-text-secondary"
-            }`}
-          >
-            {s.label}
+          <span className={`font-mono text-xs hidden sm:inline ${i === currentIdx ? "text-text-primary" : "text-text-secondary"}`}>
+            {labels[i]}
           </span>
           {i < steps.length - 1 && (
             <div className={`w-8 h-px ${i < currentIdx ? "bg-accent" : "bg-border"}`} />
@@ -213,52 +220,65 @@ function StepIndicator({ step }: { step: WizardStep }) {
   );
 }
 
-function PreviewTable({ preview, columns }: { preview: Record<string, string>[]; columns: string[] }) {
-  if (!preview.length) return null;
-  const cols = columns.slice(0, 5);
+function FileCard({
+  info,
+  children,
+}: {
+  info: FileInfo;
+  children: React.ReactNode;
+}) {
+  const cols = info.columns.slice(0, 5);
   return (
-    <div className="overflow-x-auto mt-4 rounded-lg border border-border">
-      <table className="w-full text-xs font-mono">
-        <thead>
-          <tr className="bg-surface border-b border-border">
-            {cols.map((c) => (
-              <th key={c} className="px-3 py-2 text-left text-text-secondary truncate max-w-[120px]">
-                {c}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {preview.map((row, i) => (
-            <tr key={i} className="border-b border-border/50 last:border-0">
-              {cols.map((c) => (
-                <td key={c} className="px-3 py-1.5 text-text-primary truncate max-w-[120px]">
-                  {row[c] ?? ""}
-                </td>
+    <div className="bg-surface border border-border rounded-xl p-5 space-y-4">
+      <div className="flex justify-between items-center">
+        <span className="font-mono text-sm text-accent font-medium truncate max-w-[70%]">
+          {info.filename}
+        </span>
+        <span className="font-mono text-xs text-text-secondary">
+          {info.rowCount.toLocaleString()} rows
+        </span>
+      </div>
+
+      {children}
+
+      {/* Preview table */}
+      {info.preview.length > 0 && (
+        <div className="overflow-x-auto rounded-lg border border-border">
+          <table className="w-full text-xs font-mono">
+            <thead>
+              <tr className="bg-surface border-b border-border">
+                {cols.map((c) => (
+                  <th key={c} className="px-3 py-2 text-left text-text-secondary truncate max-w-[120px]">{c}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {info.preview.map((row, i) => (
+                <tr key={i} className="border-b border-border/50 last:border-0">
+                  {cols.map((c) => (
+                    <td key={c} className="px-3 py-1.5 text-text-primary truncate max-w-[120px]">{row[c] ?? ""}</td>
+                  ))}
+                </tr>
               ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
 
 // ── Main wizard ───────────────────────────────────────────────────────────────
 
-interface Props {
-  mode: Mode;
-}
-
-export default function MatchWizard({ mode }: Props) {
+export default function MatchWizard({ mode }: { mode: Mode }) {
   const [state, dispatch] = useReducer(reducer, initial);
   const eventSourceRef = useRef<EventSource | null>(null);
+  const meta = MODE_META[mode];
 
   const handleFileA = useCallback(async (file: File) => {
     dispatch({ type: "UPLOADING_A", v: true });
     try {
-      const info = await uploadFile(file);
-      dispatch({ type: "SET_FILE_A", file: info });
+      dispatch({ type: "SET_FILE_A", file: await uploadFile(file) });
     } catch (e: unknown) {
       dispatch({ type: "ERROR", msg: (e as Error).message });
     } finally {
@@ -269,8 +289,7 @@ export default function MatchWizard({ mode }: Props) {
   const handleFileB = useCallback(async (file: File) => {
     dispatch({ type: "UPLOADING_B", v: true });
     try {
-      const info = await uploadFile(file);
-      dispatch({ type: "SET_FILE_B", file: info });
+      dispatch({ type: "SET_FILE_B", file: await uploadFile(file) });
     } catch (e: unknown) {
       dispatch({ type: "ERROR", msg: (e as Error).message });
     } finally {
@@ -281,38 +300,44 @@ export default function MatchWizard({ mode }: Props) {
   const startJob = useCallback(async () => {
     if (!state.fileA || !state.fileB) return;
 
-    let endpoint = "";
-    let body: Record<string, unknown> = {};
+    let body: Record<string, unknown> = {
+      file_a_name: state.fileA.filename,
+      file_b_name: state.fileB.filename,
+    };
 
     if (mode === "name") {
-      endpoint = "/api/match/start/name";
       body = {
+        ...body,
         file_a_id: state.fileA.fileId,
         file_b_id: state.fileB.fileId,
         column_a: state.colA,
         column_b: state.colB,
         threshold: state.threshold,
-        file_a_name: state.fileA.filename,
-        file_b_name: state.fileB.filename,
       };
-    } else {
-      endpoint = "/api/match/start/company";
+    } else if (mode === "city") {
       body = {
+        ...body,
         file_a_id: state.fileA.fileId,
         file_b_id: state.fileB.fileId,
         col_name_a: state.colNameA,
         col_name_b: state.colNameB,
-        col_org_a: state.colOrgA,
-        col_org_b: state.colOrgB,
-        use_org_match: state.useOrgMatch,
+        col_city_a: state.colCityA,
+        col_city_b: state.colCityB,
         threshold: state.threshold,
-        file_a_name: state.fileA.filename,
-        file_b_name: state.fileB.filename,
+      };
+    } else {
+      body = {
+        ...body,
+        file_a_id: state.fileA.fileId,
+        file_b_id: state.fileB.fileId,
+        col_id_a: state.colIdA,
+        col_id_b: state.colIdB,
+        col_label_b: state.colLabelB,
       };
     }
 
     try {
-      const res = await fetch(endpoint, {
+      const res = await fetch(meta.endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -331,10 +356,7 @@ export default function MatchWizard({ mode }: Props) {
         try {
           const event = JSON.parse(e.data);
           if (event.type === "progress") {
-            dispatch({
-              type: "PROGRESS",
-              p: { current: event.current, total: event.total, stage: event.stage },
-            });
+            dispatch({ type: "PROGRESS", p: { current: event.current, total: event.total, stage: event.stage } });
           } else if (event.type === "stage") {
             dispatch({ type: "PROGRESS", p: { message: event.message } });
           } else if (event.type === "complete") {
@@ -348,7 +370,6 @@ export default function MatchWizard({ mode }: Props) {
           // ignore parse errors
         }
       };
-
       es.onerror = () => {
         es.close();
         dispatch({ type: "ERROR", msg: "Connection to server lost." });
@@ -356,14 +377,66 @@ export default function MatchWizard({ mode }: Props) {
     } catch (e: unknown) {
       dispatch({ type: "ERROR", msg: (e as Error).message });
     }
-  }, [mode, state]);
+  }, [mode, meta.endpoint, state]);
 
   const handleReset = () => {
     eventSourceRef.current?.close();
     dispatch({ type: "RESET" });
   };
 
-  const title = mode === "name" ? "Name Match" : "Company Match";
+  // ── Column selectors per mode ──────────────────────────────────────────────
+
+  function ColsFileA(columns: string[]) {
+    if (mode === "name") {
+      return (
+        <ColumnSelector label="Column to match on" columns={columns} value={state.colA}
+          onChange={(v) => dispatch({ type: "SET_COL_A", col: v })} />
+      );
+    }
+    if (mode === "city") {
+      return (
+        <div className="grid grid-cols-2 gap-3">
+          <ColumnSelector label="Name column" columns={columns} value={state.colNameA}
+            onChange={(v) => dispatch({ type: "SET_COL_NAME_A", col: v })} />
+          <ColumnSelector label="City column" columns={columns} value={state.colCityA}
+            onChange={(v) => dispatch({ type: "SET_COL_CITY_A", col: v })} />
+        </div>
+      );
+    }
+    return (
+      <ColumnSelector label="ID column" columns={columns} value={state.colIdA}
+        onChange={(v) => dispatch({ type: "SET_COL_ID_A", col: v })} />
+    );
+  }
+
+  function ColsFileB(columns: string[]) {
+    if (mode === "name") {
+      return (
+        <ColumnSelector label="Column to match on" columns={columns} value={state.colB}
+          onChange={(v) => dispatch({ type: "SET_COL_B", col: v })} />
+      );
+    }
+    if (mode === "city") {
+      return (
+        <div className="grid grid-cols-2 gap-3">
+          <ColumnSelector label="Name column" columns={columns} value={state.colNameB}
+            onChange={(v) => dispatch({ type: "SET_COL_NAME_B", col: v })} />
+          <ColumnSelector label="City column" columns={columns} value={state.colCityB}
+            onChange={(v) => dispatch({ type: "SET_COL_CITY_B", col: v })} />
+        </div>
+      );
+    }
+    return (
+      <div className="grid grid-cols-2 gap-3">
+        <ColumnSelector label="ID column" columns={columns} value={state.colIdB}
+          onChange={(v) => dispatch({ type: "SET_COL_ID_B", col: v })} />
+        <ColumnSelector label="Label column (pulled into result)" columns={columns} value={state.colLabelB}
+          onChange={(v) => dispatch({ type: "SET_COL_LABEL_B", col: v })} />
+      </div>
+    );
+  }
+
+  // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <div className="min-h-screen px-4 py-12 max-w-2xl mx-auto">
@@ -373,157 +446,50 @@ export default function MatchWizard({ mode }: Props) {
         </Link>
       </div>
 
-      <h1 className="font-mono text-3xl font-semibold text-text-primary mb-2">{title}</h1>
-      <p className="text-text-secondary font-mono text-sm mb-8">
-        {mode === "name"
-          ? "Match names across two files using TF-IDF + RapidFuzz scoring."
-          : "Match companies by name or organisation number."}
-      </p>
+      <h1 className="font-mono text-3xl font-semibold text-text-primary mb-2">{meta.title}</h1>
+      <p className="text-text-secondary font-mono text-sm mb-8">{meta.desc}</p>
 
       {state.step !== "error" && <StepIndicator step={state.step} />}
 
-      {/* ── Step: Upload A ── */}
+      {/* Upload A */}
       {state.step === "upload_a" && (
         <div>
           <h2 className="font-mono text-lg font-medium text-text-primary mb-4">Step 1 — Upload File A</h2>
-          {state.uploadingA ? (
-            <div className="text-accent font-mono text-sm animate-pulse">Uploading…</div>
-          ) : (
-            <DropZone onFile={handleFileA} label="The file you want to enrich" />
-          )}
+          {state.uploadingA
+            ? <div className="text-accent font-mono text-sm animate-pulse">Uploading…</div>
+            : <DropZone onFile={handleFileA} label="The file you want to enrich" />}
         </div>
       )}
 
-      {/* ── Step: Upload B (with A column selector shown) ── */}
+      {/* Upload B — shows File A card with column selectors + File B drop zone */}
       {state.step === "upload_b" && state.fileA && (
         <div className="space-y-6">
-          {/* File A info + column selector */}
-          <div className="bg-surface border border-border rounded-xl p-5">
-            <div className="flex justify-between items-center mb-3">
-              <span className="font-mono text-sm text-accent font-medium">{state.fileA.filename}</span>
-              <span className="font-mono text-xs text-text-secondary">
-                {state.fileA.rowCount.toLocaleString()} rows
-              </span>
-            </div>
-
-            {mode === "name" ? (
-              <ColumnSelector
-                label="Column to match on"
-                columns={state.fileA.columns}
-                value={state.colA}
-                onChange={(v) => dispatch({ type: "SET_COL_A", col: v })}
-              />
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <ColumnSelector
-                  label="Company name (required)"
-                  columns={state.fileA.columns}
-                  value={state.colNameA}
-                  onChange={(v) => dispatch({ type: "SET_COL_NAME_A", col: v })}
-                />
-                <ColumnSelector
-                  label="Org number"
-                  columns={state.fileA.columns}
-                  value={state.colOrgA}
-                  onChange={(v) => dispatch({ type: "SET_COL_ORG_A", col: v })}
-                  optional
-                />
-              </div>
-            )}
-            <PreviewTable preview={state.fileA.preview} columns={state.fileA.columns} />
-          </div>
-
+          <FileCard info={state.fileA}>{ColsFileA(state.fileA.columns)}</FileCard>
           <h2 className="font-mono text-lg font-medium text-text-primary">Step 2 — Upload File B</h2>
-          {state.uploadingB ? (
-            <div className="text-accent font-mono text-sm animate-pulse">Uploading…</div>
-          ) : (
-            <DropZone onFile={handleFileB} label="The reference file to match against" />
-          )}
+          {state.uploadingB
+            ? <div className="text-accent font-mono text-sm animate-pulse">Uploading…</div>
+            : <DropZone onFile={handleFileB} label="The reference file to match against" />}
         </div>
       )}
 
-      {/* ── Step: Configure ── */}
+      {/* Configure — shows File B card with column selectors + threshold + run */}
       {state.step === "configure" && state.fileA && state.fileB && (
         <div className="space-y-6">
-          {/* File B info */}
-          <div className="bg-surface border border-border rounded-xl p-5">
-            <div className="flex justify-between items-center mb-3">
-              <span className="font-mono text-sm text-accent font-medium">{state.fileB.filename}</span>
-              <span className="font-mono text-xs text-text-secondary">
-                {state.fileB.rowCount.toLocaleString()} rows
-              </span>
-            </div>
+          <FileCard info={state.fileB}>{ColsFileB(state.fileB.columns)}</FileCard>
 
-            {mode === "name" ? (
-              <ColumnSelector
-                label="Column to match on"
-                columns={state.fileB.columns}
-                value={state.colB}
-                onChange={(v) => dispatch({ type: "SET_COL_B", col: v })}
-              />
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <ColumnSelector
-                  label="Company name (required)"
-                  columns={state.fileB.columns}
-                  value={state.colNameB}
-                  onChange={(v) => dispatch({ type: "SET_COL_NAME_B", col: v })}
-                />
-                <ColumnSelector
-                  label="Org number"
-                  columns={state.fileB.columns}
-                  value={state.colOrgB}
-                  onChange={(v) => dispatch({ type: "SET_COL_ORG_B", col: v })}
-                  optional
-                />
-              </div>
-            )}
-            <PreviewTable preview={state.fileB.preview} columns={state.fileB.columns} />
-          </div>
-
-          {/* Org number toggle (company mode only) */}
-          {mode === "company" && (
-            <div className="bg-surface border border-border rounded-xl p-5">
-              <p className="font-mono text-sm text-text-primary mb-3">
-                Do both files contain organisation numbers?
-              </p>
-              <div className="flex gap-3">
-                {(["yes", "no"] as const).map((opt) => (
-                  <button
-                    key={opt}
-                    onClick={() => dispatch({ type: "SET_USE_ORG_MATCH", v: opt === "yes" })}
-                    className={[
-                      "px-5 py-2 rounded-lg font-mono text-sm border transition-colors",
-                      (opt === "yes") === state.useOrgMatch
-                        ? "border-accent text-accent bg-accent/10"
-                        : "border-border text-text-secondary hover:border-accent/60",
-                    ].join(" ")}
-                  >
-                    {opt.charAt(0).toUpperCase() + opt.slice(1)}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Threshold */}
-          {!(mode === "company" && state.useOrgMatch) && (
+          {mode !== "id" && (
             <div className="bg-surface border border-border rounded-xl p-5">
               <label className="font-mono text-sm text-text-primary mb-4 block">
-                Match threshold:{" "}
-                <span className="text-accent font-semibold">{state.threshold}%</span>
+                Match threshold: <span className="text-accent font-semibold">{state.threshold}%</span>
               </label>
               <input
-                type="range"
-                min={50}
-                max={100}
-                value={state.threshold}
+                type="range" min={50} max={100} value={state.threshold}
                 onChange={(e) => dispatch({ type: "SET_THRESHOLD", v: Number(e.target.value) })}
                 className="w-full accent-amber-500"
               />
               <div className="flex justify-between font-mono text-xs text-text-secondary mt-1">
                 <span>50%</span>
-                <span className="text-text-secondary/60">Only show matches above {state.threshold}%</span>
+                <span className="text-text-secondary/60">Only highlight matches above {state.threshold}%</span>
                 <span>100%</span>
               </div>
             </div>
@@ -539,7 +505,7 @@ export default function MatchWizard({ mode }: Props) {
         </div>
       )}
 
-      {/* ── Step: Running ── */}
+      {/* Running */}
       {state.step === "running" && (
         <div className="space-y-6">
           <h2 className="font-mono text-lg font-medium text-text-primary">Running…</h2>
@@ -553,19 +519,19 @@ export default function MatchWizard({ mode }: Props) {
           </div>
           <button
             onClick={handleReset}
-            className="text-text-secondary font-mono text-sm hover:text-danger transition-colors border border-border px-4 py-2 rounded-lg"
+            className="text-text-secondary font-mono text-sm hover:text-red-400 transition-colors border border-border px-4 py-2 rounded-lg"
           >
             Cancel
           </button>
         </div>
       )}
 
-      {/* ── Step: Results ── */}
+      {/* Results */}
       {state.step === "results" && state.stats && (
         <ResultsSummary stats={state.stats} jobId={state.jobId} onReset={handleReset} />
       )}
 
-      {/* ── Step: Error ── */}
+      {/* Error */}
       {state.step === "error" && (
         <div className="space-y-4">
           <div className="bg-red-950/40 border border-red-800 rounded-xl p-5">

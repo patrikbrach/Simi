@@ -5,7 +5,7 @@ Never runs a full N×M comparison matrix.
 from __future__ import annotations
 
 import asyncio
-from typing import AsyncIterator, Callable
+from typing import Callable
 
 import numpy as np
 import pandas as pd
@@ -13,9 +13,12 @@ from rapidfuzz import fuzz
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-from services.normalizer import normalize, normalize_org_number
+from services.normalizer import normalize, normalize_id
 
 TOP_N = 10  # TF-IDF candidates per row before RapidFuzz re-ranking
+
+NAME_WEIGHT = 0.75
+CITY_WEIGHT = 0.25
 
 
 def _build_tfidf(values_b: list[str]) -> tuple[TfidfVectorizer, np.ndarray]:
@@ -29,24 +32,17 @@ def _build_tfidf(values_b: list[str]) -> tuple[TfidfVectorizer, np.ndarray]:
     return vectorizer, matrix
 
 
+# ── Name-only matching ────────────────────────────────────────────────────────
+
 async def match_names(
     values_a: list[str],
     values_b: list[str],
     threshold: int,
     progress_cb: Callable[[int, int, str], None] | None = None,
 ) -> list[tuple[str, int]]:
-    """
-    Returns list of (best_match_value_from_b, score) for each value in values_a.
-    Runs blocking CPU work in the default executor to avoid blocking the event loop.
-    """
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(
-        None,
-        _match_names_sync,
-        values_a,
-        values_b,
-        threshold,
-        progress_cb,
+        None, _match_names_sync, values_a, values_b, threshold, progress_cb,
     )
 
 
@@ -75,17 +71,16 @@ def _match_names_sync(
         else:
             vec_a = vectorizer.transform([norm])
             sims = cosine_similarity(vec_a, matrix_b).flatten()
-            top_indices = np.argpartition(sims, -min(TOP_N, len(sims)))[-min(TOP_N, len(sims)):]
+            k = min(TOP_N, len(sims))
+            top_indices = np.argpartition(sims, -k)[-k:]
 
             best_value = ""
             best_score = 0
             for idx in top_indices:
-                candidate_raw = values_b[idx]
-                candidate_norm = norm_b[idx]
-                score = fuzz.token_sort_ratio(norm, candidate_norm)
+                score = fuzz.token_sort_ratio(norm, norm_b[idx])
                 if score > best_score:
                     best_score = score
-                    best_value = candidate_raw
+                    best_value = values_b[idx]
 
             results.append((best_value, best_score))
 
@@ -95,29 +90,98 @@ def _match_names_sync(
     return results
 
 
-async def match_org_numbers(
-    series_a: pd.Series,
-    series_b: pd.Series,
-    col_name_b: str,
+# ── Name + City matching ──────────────────────────────────────────────────────
+
+async def match_names_with_city(
+    names_a: list[str],
+    cities_a: list[str],
+    names_b: list[str],
+    cities_b: list[str],
+    threshold: int,
+    progress_cb: Callable[[int, int, str], None] | None = None,
+) -> list[tuple[str, int]]:
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        None,
+        _match_names_city_sync,
+        names_a, cities_a, names_b, cities_b, threshold, progress_cb,
+    )
+
+
+def _match_names_city_sync(
+    names_a: list[str],
+    cities_a: list[str],
+    names_b: list[str],
+    cities_b: list[str],
+    threshold: int,
+    progress_cb: Callable[[int, int, str], None] | None,
+) -> list[tuple[str, int]]:
+    norm_names_a = [normalize(v) for v in names_a]
+    norm_names_b = [normalize(v) for v in names_b]
+    norm_cities_a = [normalize(v) for v in cities_a]
+    norm_cities_b = [normalize(v) for v in cities_b]
+
+    if progress_cb:
+        progress_cb(0, len(names_a), "building_index")
+
+    # TF-IDF index built on names only (city used only during re-ranking)
+    vectorizer, matrix_b = _build_tfidf(norm_names_b)
+
+    if progress_cb:
+        progress_cb(0, len(names_a), "matching")
+
+    results: list[tuple[str, int]] = []
+
+    for i, norm_name in enumerate(norm_names_a):
+        if not norm_name:
+            results.append(("", 0))
+        else:
+            vec_a = vectorizer.transform([norm_name])
+            sims = cosine_similarity(vec_a, matrix_b).flatten()
+            k = min(TOP_N, len(sims))
+            top_indices = np.argpartition(sims, -k)[-k:]
+
+            best_value = ""
+            best_score = 0
+            for idx in top_indices:
+                name_score = fuzz.token_sort_ratio(norm_name, norm_names_b[idx])
+                city_score = fuzz.ratio(norm_cities_a[i], norm_cities_b[idx])
+                combined = round(NAME_WEIGHT * name_score + CITY_WEIGHT * city_score)
+                if combined > best_score:
+                    best_score = combined
+                    best_value = names_b[idx]
+
+            results.append((best_value, best_score))
+
+        if progress_cb and (i + 1) % 100 == 0:
+            progress_cb(i + 1, len(names_a), "matching")
+
+    return results
+
+
+# ── Exact ID matching ─────────────────────────────────────────────────────────
+
+async def match_ids(
+    ids_a: pd.Series,
+    ids_b: pd.Series,
+    label_col_b: str,
     df_b: pd.DataFrame,
     progress_cb: Callable[[int, int, str], None] | None = None,
 ) -> list[tuple[str, int]]:
-    """Exact org number match. Score 100 on hit, 0 on miss."""
-    norm_b = {normalize_org_number(str(v)): df_b[col_name_b].iloc[i]
-              for i, v in enumerate(series_b)}
+    """Exact ID match (org numbers, ISRCs, customer IDs, …). Score 100/0."""
+    lookup = {
+        normalize_id(str(v)): df_b[label_col_b].iloc[i]
+        for i, v in enumerate(ids_b)
+    }
 
     results: list[tuple[str, int]] = []
-    total = len(series_a)
-    for i, raw in enumerate(series_a):
-        key = normalize_org_number(str(raw))
-        if key in norm_b:
-            results.append((norm_b[key], 100))
-        else:
-            results.append(("", 0))
+    total = len(ids_a)
+    for i, raw in enumerate(ids_a):
+        key = normalize_id(str(raw))
+        results.append((lookup[key], 100) if key in lookup else ("", 0))
 
         if progress_cb and (i + 1) % 500 == 0:
             progress_cb(i + 1, total, "matching")
-        # yield control every 500 rows
         if (i + 1) % 500 == 0:
             await asyncio.sleep(0)
 

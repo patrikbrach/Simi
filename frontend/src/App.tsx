@@ -9,7 +9,8 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/match/name" element={<MatchWizard mode="name" />} />
-        <Route path="/match/company" element={<MatchWizard mode="company" />} />
+        <Route path="/match/city" element={<MatchWizard mode="city" />} />
+        <Route path="/match/id" element={<MatchWizard mode="id" />} />
         <Route path="/analytics" element={<Analytics />} />
       </Routes>
     </BrowserRouter>

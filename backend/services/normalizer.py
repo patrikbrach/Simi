@@ -28,7 +28,12 @@ def normalize(text: str) -> str:
     return " ".join(tokens)
 
 
-def normalize_org_number(value: str) -> str:
+def normalize_id(value: str) -> str:
+    """Strip whitespace, hyphens and dots — works for org numbers, ISRCs, IDs, etc."""
     if not isinstance(value, str):
         value = str(value) if value is not None else ""
-    return re.sub(r"[\s\-]", "", value).strip()
+    return re.sub(r"[\s\-\.]", "", value).strip()
+
+
+# Keep old name as alias for backwards compatibility
+normalize_org_number = normalize_id

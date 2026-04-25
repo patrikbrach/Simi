@@ -1,7 +1,9 @@
 """
-POST /api/match/start       – queue a match job, return job_id
+POST /api/match/start/name    – fuzzy name match
+POST /api/match/start/city    – fuzzy name + city match
+POST /api/match/start/id      – exact ID match
 GET  /api/match/{id}/progress – SSE stream of progress events
-GET  /api/match/{id}/download – download the result Excel file
+GET  /api/match/{id}/download – download result Excel when complete
 """
 from __future__ import annotations
 
@@ -12,7 +14,6 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import AsyncIterator
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
@@ -23,7 +24,7 @@ import models
 from database import SessionLocal
 from routers.upload import get_dataframe, release_file
 from services.excel_writer import build_result_excel, result_filename
-from services.matcher import match_names, match_org_numbers
+from services.matcher import match_ids, match_names, match_names_with_city
 
 router = APIRouter()
 
@@ -48,7 +49,7 @@ class Job:
 _jobs: dict[str, Job] = {}
 
 
-# ── Request / Response schemas ────────────────────────────────────────────────
+# ── Request schemas ───────────────────────────────────────────────────────────
 
 class NameMatchRequest(BaseModel):
     file_a_id: str
@@ -60,17 +61,24 @@ class NameMatchRequest(BaseModel):
     file_b_name: str = ""
 
 
-class CompanyMatchRequest(BaseModel):
+class NameCityMatchRequest(BaseModel):
     file_a_id: str
     file_b_id: str
-    # company name columns (required for fuzzy branch)
     col_name_a: str
     col_name_b: str
-    # org number columns (optional)
-    col_org_a: str = ""
-    col_org_b: str = ""
-    use_org_match: bool = False
+    col_city_a: str
+    col_city_b: str
     threshold: int = 85
+    file_a_name: str = ""
+    file_b_name: str = ""
+
+
+class IdMatchRequest(BaseModel):
+    file_a_id: str
+    file_b_id: str
+    col_id_a: str
+    col_id_b: str
+    col_label_b: str  # column from B to use as the matched value label
     file_a_name: str = ""
     file_b_name: str = ""
 
@@ -105,7 +113,45 @@ def _log_run(use_case: str, data: dict) -> None:
         db.close()
 
 
-# ── Name match background task ────────────────────────────────────────────────
+def _finish(
+    job: Job,
+    df_a,
+    match_values: list[str],
+    match_scores: list[int],
+    threshold: int,
+    use_case: str,
+    elapsed: float,
+    req_meta: dict,
+    label: str = "Match_Value",
+) -> None:
+    above = sum(1 for s in match_scores if s >= threshold)
+    avg = sum(match_scores) / len(match_scores) if match_scores else 0.0
+    exact = sum(1 for s in match_scores if s == 100)
+
+    job.result_bytes = build_result_excel(df_a, match_values, match_scores, threshold, label)
+    job.result_filename = result_filename()
+    job.status = JobStatus.complete
+
+    stats = {
+        "matches": above,
+        "total": len(match_scores),
+        "avg_score": round(avg, 1),
+        "exact_matches": exact,
+        "processing_time_sec": round(elapsed, 2),
+    }
+    _send(job, {"type": "complete", "stats": stats})
+
+    _log_run(use_case, {
+        **req_meta,
+        "threshold": threshold,
+        "processing_time_sec": elapsed,
+        "matches_above_threshold": above,
+        "avg_match_score": avg,
+        "exact_matches": exact,
+    })
+
+
+# ── Background tasks ──────────────────────────────────────────────────────────
 
 async def _run_name_match(job: Job, req: NameMatchRequest, ip_hash: str) -> None:
     job.status = JobStatus.running
@@ -116,71 +162,39 @@ async def _run_name_match(job: Job, req: NameMatchRequest, ip_hash: str) -> None
         df_b = get_dataframe(req.file_b_id)
 
         if req.column_a not in df_a.columns:
-            raise ValueError(f"Column '{req.column_a}' not found in File A.")
+            raise ValueError(f"Column '{req.column_a}' not in File A.")
         if req.column_b not in df_b.columns:
-            raise ValueError(f"Column '{req.column_b}' not found in File B.")
+            raise ValueError(f"Column '{req.column_b}' not in File B.")
 
-        values_a = df_a[req.column_a].fillna("").tolist()
-        values_b = df_b[req.column_b].fillna("").tolist()
+        _send(job, {"type": "stage", "message": "Building index…"})
 
-        _send(job, {"type": "stage", "message": "Building TF-IDF index…"})
-
-        last_progress = {"current": 0}
-
-        def progress_cb(current: int, total: int, stage: str) -> None:
-            last_progress["current"] = current
+        def cb(current: int, total: int, stage: str) -> None:
             _send(job, {"type": "progress", "current": current, "total": total, "stage": stage})
 
-        results = await match_names(values_a, values_b, req.threshold, progress_cb)
-
+        results = await match_names(
+            df_a[req.column_a].fillna("").tolist(),
+            df_b[req.column_b].fillna("").tolist(),
+            req.threshold, cb,
+        )
         _send(job, {"type": "stage", "message": "Finalizing…"})
-
-        match_values = [r[0] for r in results]
-        match_scores = [r[1] for r in results]
-
-        elapsed = time.monotonic() - t0
-        above = sum(1 for s in match_scores if s >= req.threshold)
-        avg = sum(match_scores) / len(match_scores) if match_scores else 0.0
-        exact = sum(1 for s in match_scores if s == 100)
-
-        job.result_bytes = build_result_excel(df_a, match_values, match_scores, req.threshold)
-        job.result_filename = result_filename()
-        job.status = JobStatus.complete
-
-        stats = {
-            "matches": above,
-            "total": len(values_a),
-            "avg_score": round(avg, 1),
-            "exact_matches": exact,
-            "processing_time_sec": round(elapsed, 2),
-        }
-        _send(job, {"type": "complete", "stats": stats})
-
-        _log_run("name_match", {
-            "file_a_rows": len(df_a),
-            "file_b_rows": len(df_b),
-            "file_a_name": req.file_a_name,
-            "file_b_name": req.file_b_name,
-            "threshold": req.threshold,
-            "processing_time_sec": elapsed,
-            "matches_above_threshold": above,
-            "avg_match_score": avg,
-            "exact_matches": exact,
-            "client_ip_hash": ip_hash,
-        })
-
-        release_file(req.file_a_id)
-        release_file(req.file_b_id)
-
+        _finish(
+            job, df_a,
+            [r[0] for r in results], [r[1] for r in results],
+            req.threshold, "name_match", time.monotonic() - t0,
+            {"file_a_rows": len(df_a), "file_b_rows": len(df_b),
+             "file_a_name": req.file_a_name, "file_b_name": req.file_b_name,
+             "client_ip_hash": ip_hash},
+        )
     except Exception as exc:
         job.status = JobStatus.error
         job.error = str(exc)
         _send(job, {"type": "error", "message": str(exc)})
+    finally:
+        release_file(req.file_a_id)
+        release_file(req.file_b_id)
 
 
-# ── Company match background task ─────────────────────────────────────────────
-
-async def _run_company_match(job: Job, req: CompanyMatchRequest, ip_hash: str) -> None:
+async def _run_name_city_match(job: Job, req: NameCityMatchRequest, ip_hash: str) -> None:
     job.status = JobStatus.running
     t0 = time.monotonic()
     try:
@@ -188,73 +202,86 @@ async def _run_company_match(job: Job, req: CompanyMatchRequest, ip_hash: str) -
         df_a = get_dataframe(req.file_a_id)
         df_b = get_dataframe(req.file_b_id)
 
-        def progress_cb(current: int, total: int, stage: str) -> None:
+        for col, df, label in [
+            (req.col_name_a, df_a, "File A"), (req.col_city_a, df_a, "File A"),
+            (req.col_name_b, df_b, "File B"), (req.col_city_b, df_b, "File B"),
+        ]:
+            if col not in df.columns:
+                raise ValueError(f"Column '{col}' not found in {label}.")
+
+        _send(job, {"type": "stage", "message": "Building index…"})
+
+        def cb(current: int, total: int, stage: str) -> None:
             _send(job, {"type": "progress", "current": current, "total": total, "stage": stage})
 
-        if req.use_org_match:
-            if not req.col_org_a or not req.col_org_b:
-                raise ValueError("Org number columns must be specified for org match.")
-            _send(job, {"type": "stage", "message": "Matching organisation numbers…"})
-            results = await match_org_numbers(
-                df_a[req.col_org_a].fillna(""),
-                df_b[req.col_org_b].fillna(""),
-                req.col_name_b,
-                df_b,
-                progress_cb,
-            )
-            use_case = "company_org"
-        else:
-            _send(job, {"type": "stage", "message": "Building TF-IDF index…"})
-            values_a = df_a[req.col_name_a].fillna("").tolist()
-            values_b = df_b[req.col_name_b].fillna("").tolist()
-            results = await match_names(values_a, values_b, req.threshold, progress_cb)
-            use_case = "company_name"
-
-        _send(job, {"type": "stage", "message": "Finalizing…"})
-
-        match_values = [r[0] for r in results]
-        match_scores = [r[1] for r in results]
-
-        elapsed = time.monotonic() - t0
-        above = sum(1 for s in match_scores if s >= req.threshold)
-        avg = sum(match_scores) / len(match_scores) if match_scores else 0.0
-        exact = sum(1 for s in match_scores if s == 100)
-
-        job.result_bytes = build_result_excel(
-            df_a, match_values, match_scores, req.threshold, label="Match_Company_Name"
+        results = await match_names_with_city(
+            df_a[req.col_name_a].fillna("").tolist(),
+            df_a[req.col_city_a].fillna("").tolist(),
+            df_b[req.col_name_b].fillna("").tolist(),
+            df_b[req.col_city_b].fillna("").tolist(),
+            req.threshold, cb,
         )
-        job.result_filename = result_filename()
-        job.status = JobStatus.complete
-
-        stats = {
-            "matches": above,
-            "total": len(df_a),
-            "avg_score": round(avg, 1),
-            "exact_matches": exact,
-            "processing_time_sec": round(elapsed, 2),
-        }
-        _send(job, {"type": "complete", "stats": stats})
-
-        _log_run(use_case, {
-            "file_a_rows": len(df_a),
-            "file_b_rows": len(df_b),
-            "file_a_name": req.file_a_name,
-            "file_b_name": req.file_b_name,
-            "threshold": req.threshold,
-            "processing_time_sec": elapsed,
-            "matches_above_threshold": above,
-            "avg_match_score": avg,
-            "exact_matches": exact,
-            "client_ip_hash": ip_hash,
-        })
-
-        release_file(req.file_a_id)
-        release_file(req.file_b_id)
-
+        _send(job, {"type": "stage", "message": "Finalizing…"})
+        _finish(
+            job, df_a,
+            [r[0] for r in results], [r[1] for r in results],
+            req.threshold, "name_city_match", time.monotonic() - t0,
+            {"file_a_rows": len(df_a), "file_b_rows": len(df_b),
+             "file_a_name": req.file_a_name, "file_b_name": req.file_b_name,
+             "client_ip_hash": ip_hash},
+        )
     except Exception as exc:
         job.status = JobStatus.error
         job.error = str(exc)
         _send(job, {"type": "error", "message": str(exc)})
+    finally:
+        release_file(req.file_a_id)
+        release_file(req.file_b_id)
+
+
+async def _run_id_match(job: Job, req: IdMatchRequest, ip_hash: str) -> None:
+    job.status = JobStatus.running
+    t0 = time.monotonic()
+    try:
+        _send(job, {"type": "stage", "message": "Loading files…"})
+        df_a = get_dataframe(req.file_a_id)
+        df_b = get_dataframe(req.file_b_id)
+
+        for col, df, label in [
+            (req.col_id_a, df_a, "File A"),
+            (req.col_id_b, df_b, "File B"),
+            (req.col_label_b, df_b, "File B"),
+        ]:
+            if col not in df.columns:
+                raise ValueError(f"Column '{col}' not found in {label}.")
+
+        _send(job, {"type": "stage", "message": "Matching IDs…"})
+
+        def cb(current: int, total: int, stage: str) -> None:
+            _send(job, {"type": "progress", "current": current, "total": total, "stage": stage})
+
+        results = await match_ids(
+            df_a[req.col_id_a].fillna(""),
+            df_b[req.col_id_b].fillna(""),
+            req.col_label_b, df_b, cb,
+        )
+        _send(job, {"type": "stage", "message": "Finalizing…"})
+        # ID match: threshold is always 100 (exact only), use 100 for highlight logic
+        _finish(
+            job, df_a,
+            [r[0] for r in results], [r[1] for r in results],
+            100, "id_match", time.monotonic() - t0,
+            {"file_a_rows": len(df_a), "file_b_rows": len(df_b),
+             "file_a_name": req.file_a_name, "file_b_name": req.file_b_name,
+             "client_ip_hash": ip_hash},
+        )
+    except Exception as exc:
+        job.status = JobStatus.error
+        job.error = str(exc)
+        _send(job, {"type": "error", "message": str(exc)})
+    finally:
+        release_file(req.file_a_id)
+        release_file(req.file_b_id)
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -267,11 +294,19 @@ async def start_name_match(req: NameMatchRequest, request: Request) -> StartResp
     return StartResponse(job_id=job.id)
 
 
-@router.post("/match/start/company", response_model=StartResponse)
-async def start_company_match(req: CompanyMatchRequest, request: Request) -> StartResponse:
+@router.post("/match/start/city", response_model=StartResponse)
+async def start_name_city_match(req: NameCityMatchRequest, request: Request) -> StartResponse:
     job = Job(id=str(uuid.uuid4()))
     _jobs[job.id] = job
-    asyncio.create_task(_run_company_match(job, req, _ip_hash(request)))
+    asyncio.create_task(_run_name_city_match(job, req, _ip_hash(request)))
+    return StartResponse(job_id=job.id)
+
+
+@router.post("/match/start/id", response_model=StartResponse)
+async def start_id_match(req: IdMatchRequest, request: Request) -> StartResponse:
+    job = Job(id=str(uuid.uuid4()))
+    _jobs[job.id] = job
+    asyncio.create_task(_run_id_match(job, req, _ip_hash(request)))
     return StartResponse(job_id=job.id)
 
 
@@ -281,8 +316,8 @@ async def match_progress(job_id: str) -> StreamingResponse:
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found.")
 
-    async def event_stream() -> AsyncIterator[str]:
-        timeout_at = time.monotonic() + 300  # 5-minute hard limit
+    async def event_stream():
+        timeout_at = time.monotonic() + 300
         while True:
             if time.monotonic() > timeout_at:
                 yield "data: " + json.dumps({"type": "error", "message": "Job timed out."}) + "\n\n"
@@ -293,16 +328,12 @@ async def match_progress(job_id: str) -> StreamingResponse:
                 if event.get("type") in ("complete", "error"):
                     break
             except asyncio.TimeoutError:
-                # Keep-alive ping
                 yield ": ping\n\n"
 
     return StreamingResponse(
         event_stream(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        },
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
