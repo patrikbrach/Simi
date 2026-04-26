@@ -99,7 +99,7 @@ async def match_names_with_city(
     cities_b: list[str],
     threshold: int,
     progress_cb: Callable[[int, int, str], None] | None = None,
-) -> list[tuple[str, int]]:
+) -> list[tuple[str, str, int]]:
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(
         None,
@@ -115,7 +115,7 @@ def _match_names_city_sync(
     cities_b: list[str],
     threshold: int,
     progress_cb: Callable[[int, int, str], None] | None,
-) -> list[tuple[str, int]]:
+) -> list[tuple[str, str, int]]:
     norm_names_a = [normalize(v) for v in names_a]
     norm_names_b = [normalize(v) for v in names_b]
     norm_cities_a = [normalize(v) for v in cities_a]
@@ -130,18 +130,19 @@ def _match_names_city_sync(
     if progress_cb:
         progress_cb(0, len(names_a), "matching")
 
-    results: list[tuple[str, int]] = []
+    results: list[tuple[str, str, int]] = []
 
     for i, norm_name in enumerate(norm_names_a):
         if not norm_name:
-            results.append(("", 0))
+            results.append(("", "", 0))
         else:
             vec_a = vectorizer.transform([norm_name])
             sims = cosine_similarity(vec_a, matrix_b).flatten()
             k = min(TOP_N, len(sims))
             top_indices = np.argpartition(sims, -k)[-k:]
 
-            best_value = ""
+            best_name = ""
+            best_city = ""
             best_score = 0
             for idx in top_indices:
                 name_score = fuzz.token_sort_ratio(norm_name, norm_names_b[idx])
@@ -149,9 +150,10 @@ def _match_names_city_sync(
                 combined = round(NAME_WEIGHT * name_score + CITY_WEIGHT * city_score)
                 if combined > best_score:
                     best_score = combined
-                    best_value = names_b[idx]
+                    best_name = names_b[idx]
+                    best_city = cities_b[idx]
 
-            results.append((best_value, best_score))
+            results.append((best_name, best_city, best_score))
 
         if progress_cb and (i + 1) % 100 == 0:
             progress_cb(i + 1, len(names_a), "matching")

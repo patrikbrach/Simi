@@ -123,12 +123,13 @@ def _finish(
     elapsed: float,
     req_meta: dict,
     label: str = "Match_Value",
+    match_cities: list[str] | None = None,
 ) -> None:
     above = sum(1 for s in match_scores if s >= threshold)
     avg = sum(match_scores) / len(match_scores) if match_scores else 0.0
     exact = sum(1 for s in match_scores if s == 100)
 
-    job.result_bytes = build_result_excel(df_a, match_values, match_scores, threshold, label)
+    job.result_bytes = build_result_excel(df_a, match_values, match_scores, threshold, label, match_cities)
     job.result_filename = result_filename()
     job.status = JobStatus.complete
 
@@ -224,11 +225,13 @@ async def _run_name_city_match(job: Job, req: NameCityMatchRequest, ip_hash: str
         _send(job, {"type": "stage", "message": "Finalizing…"})
         _finish(
             job, df_a,
-            [r[0] for r in results], [r[1] for r in results],
+            [r[0] for r in results], [r[2] for r in results],
             req.threshold, "name_city_match", time.monotonic() - t0,
             {"file_a_rows": len(df_a), "file_b_rows": len(df_b),
              "file_a_name": req.file_a_name, "file_b_name": req.file_b_name,
              "client_ip_hash": ip_hash},
+            label="Match_Name",
+            match_cities=[r[1] for r in results],
         )
     except Exception as exc:
         job.status = JobStatus.error
