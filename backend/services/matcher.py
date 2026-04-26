@@ -77,7 +77,7 @@ def _match_names_sync(
             best_value = ""
             best_score = 0
             for idx in top_indices:
-                score = fuzz.token_sort_ratio(norm, norm_b[idx])
+                score = round(fuzz.token_sort_ratio(norm, norm_b[idx]))
                 if score > best_score:
                     best_score = score
                     best_value = values_b[idx]

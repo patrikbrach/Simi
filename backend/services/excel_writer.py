@@ -30,6 +30,9 @@ def build_result_excel(
         score_col_idx = len(result_df.columns)  # 1-based after to_excel
         score_col_letter = get_column_letter(score_col_idx)
 
+        for r in range(2, len(match_scores) + 2):
+            ws[f"{score_col_letter}{r}"].number_format = "0"
+
         for row_num, score in enumerate(match_scores, start=2):  # row 1 = header
             if score < threshold:
                 cell = ws[f"{score_col_letter}{row_num}"]
