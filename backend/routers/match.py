@@ -199,6 +199,7 @@ async def _run_name_match(job: Job, req: NameMatchRequest, ip_hash: str) -> None
             req.threshold, cb,
         )
         _send(job, {"type": "stage", "message": "Finalizing…"})
+        all_b_cols = [c for c in df_b.columns if c != req.column_b]
         _finish(
             job, df_a,
             [r[0] for r in results], [r[1] for r in results],
@@ -206,7 +207,7 @@ async def _run_name_match(job: Job, req: NameMatchRequest, ip_hash: str) -> None
             {"file_a_rows": len(df_a), "file_b_rows": len(df_b),
              "file_a_name": req.file_a_name, "file_b_name": req.file_b_name,
              "client_ip_hash": ip_hash},
-            extra_b_data=_extract_extra_cols(df_b, [r[2] for r in results], req.extra_cols_b),
+            extra_b_data=_extract_extra_cols(df_b, [r[2] for r in results], all_b_cols),
         )
     except Exception as exc:
         job.status = JobStatus.error
@@ -245,6 +246,8 @@ async def _run_name_city_match(job: Job, req: NameCityMatchRequest, ip_hash: str
             req.threshold, cb,
         )
         _send(job, {"type": "stage", "message": "Finalizing…"})
+        used_b_cols = {req.col_name_b, req.col_city_b}
+        all_b_cols = [c for c in df_b.columns if c not in used_b_cols]
         _finish(
             job, df_a,
             [r[0] for r in results], [r[2] for r in results],
@@ -254,7 +257,7 @@ async def _run_name_city_match(job: Job, req: NameCityMatchRequest, ip_hash: str
              "client_ip_hash": ip_hash},
             label="Match_Name",
             match_cities=[r[1] for r in results],
-            extra_b_data=_extract_extra_cols(df_b, [r[3] for r in results], req.extra_cols_b),
+            extra_b_data=_extract_extra_cols(df_b, [r[3] for r in results], all_b_cols),
         )
     except Exception as exc:
         job.status = JobStatus.error
@@ -293,6 +296,8 @@ async def _run_id_match(job: Job, req: IdMatchRequest, ip_hash: str) -> None:
         )
         _send(job, {"type": "stage", "message": "Finalizing…"})
         # ID match: threshold is always 100 (exact only), use 100 for highlight logic
+        used_b_cols = {req.col_id_b, req.col_label_b}
+        all_b_cols = [c for c in df_b.columns if c not in used_b_cols]
         _finish(
             job, df_a,
             [r[0] for r in results], [r[1] for r in results],
@@ -300,7 +305,7 @@ async def _run_id_match(job: Job, req: IdMatchRequest, ip_hash: str) -> None:
             {"file_a_rows": len(df_a), "file_b_rows": len(df_b),
              "file_a_name": req.file_a_name, "file_b_name": req.file_b_name,
              "client_ip_hash": ip_hash},
-            extra_b_data=_extract_extra_cols(df_b, [r[2] for r in results], req.extra_cols_b),
+            extra_b_data=_extract_extra_cols(df_b, [r[2] for r in results], all_b_cols),
         )
     except Exception as exc:
         job.status = JobStatus.error
