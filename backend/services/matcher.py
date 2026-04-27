@@ -39,7 +39,7 @@ async def match_names(
     values_b: list[str],
     threshold: int,
     progress_cb: Callable[[int, int, str], None] | None = None,
-) -> list[tuple[str, int]]:
+) -> list[tuple[str, int, int]]:
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(
         None, _match_names_sync, values_a, values_b, threshold, progress_cb,
@@ -51,7 +51,7 @@ def _match_names_sync(
     values_b: list[str],
     threshold: int,
     progress_cb: Callable[[int, int, str], None] | None,
-) -> list[tuple[str, int]]:
+) -> list[tuple[str, int, int]]:
     norm_a = [normalize(v) for v in values_a]
     norm_b = [normalize(v) for v in values_b]
 
@@ -63,11 +63,11 @@ def _match_names_sync(
     if progress_cb:
         progress_cb(0, len(values_a), "matching")
 
-    results: list[tuple[str, int]] = []
+    results: list[tuple[str, int, int]] = []
 
     for i, (raw_a, norm) in enumerate(zip(values_a, norm_a)):
         if not norm:
-            results.append(("", 0))
+            results.append(("", 0, -1))
         else:
             vec_a = vectorizer.transform([norm])
             sims = cosine_similarity(vec_a, matrix_b).flatten()
@@ -76,13 +76,15 @@ def _match_names_sync(
 
             best_value = ""
             best_score = 0
+            best_idx = -1
             for idx in top_indices:
                 score = round(fuzz.token_sort_ratio(norm, norm_b[idx]))
                 if score > best_score:
                     best_score = score
                     best_value = values_b[idx]
+                    best_idx = int(idx)
 
-            results.append((best_value, best_score))
+            results.append((best_value, best_score, best_idx))
 
         if progress_cb and (i + 1) % 100 == 0:
             progress_cb(i + 1, len(values_a), "matching")
@@ -99,7 +101,7 @@ async def match_names_with_city(
     cities_b: list[str],
     threshold: int,
     progress_cb: Callable[[int, int, str], None] | None = None,
-) -> list[tuple[str, str, int]]:
+) -> list[tuple[str, str, int, int]]:
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(
         None,
@@ -115,7 +117,7 @@ def _match_names_city_sync(
     cities_b: list[str],
     threshold: int,
     progress_cb: Callable[[int, int, str], None] | None,
-) -> list[tuple[str, str, int]]:
+) -> list[tuple[str, str, int, int]]:
     norm_names_a = [normalize(v) for v in names_a]
     norm_names_b = [normalize(v) for v in names_b]
     norm_cities_a = [normalize(v) for v in cities_a]
@@ -130,11 +132,11 @@ def _match_names_city_sync(
     if progress_cb:
         progress_cb(0, len(names_a), "matching")
 
-    results: list[tuple[str, str, int]] = []
+    results: list[tuple[str, str, int, int]] = []
 
     for i, norm_name in enumerate(norm_names_a):
         if not norm_name:
-            results.append(("", "", 0))
+            results.append(("", "", 0, -1))
         else:
             vec_a = vectorizer.transform([norm_name])
             sims = cosine_similarity(vec_a, matrix_b).flatten()
@@ -144,6 +146,7 @@ def _match_names_city_sync(
             best_name = ""
             best_city = ""
             best_score = 0
+            best_idx = -1
             for idx in top_indices:
                 name_score = fuzz.token_sort_ratio(norm_name, norm_names_b[idx])
                 city_score = fuzz.ratio(norm_cities_a[i], norm_cities_b[idx])
@@ -152,8 +155,9 @@ def _match_names_city_sync(
                     best_score = combined
                     best_name = names_b[idx]
                     best_city = cities_b[idx]
+                    best_idx = int(idx)
 
-            results.append((best_name, best_city, best_score))
+            results.append((best_name, best_city, best_score, best_idx))
 
         if progress_cb and (i + 1) % 100 == 0:
             progress_cb(i + 1, len(names_a), "matching")
@@ -169,18 +173,22 @@ async def match_ids(
     label_col_b: str,
     df_b: pd.DataFrame,
     progress_cb: Callable[[int, int, str], None] | None = None,
-) -> list[tuple[str, int]]:
+) -> list[tuple[str, int, int]]:
     """Exact ID match (org numbers, ISRCs, customer IDs, …). Score 100/0."""
     lookup = {
-        normalize_id(str(v)): df_b[label_col_b].iloc[i]
+        normalize_id(str(v)): (df_b[label_col_b].iloc[i], i)
         for i, v in enumerate(ids_b)
     }
 
-    results: list[tuple[str, int]] = []
+    results: list[tuple[str, int, int]] = []
     total = len(ids_a)
     for i, raw in enumerate(ids_a):
         key = normalize_id(str(raw))
-        results.append((lookup[key], 100) if key in lookup else ("", 0))
+        if key in lookup:
+            label, row_idx = lookup[key]
+            results.append((label, 100, row_idx))
+        else:
+            results.append(("", 0, -1))
 
         if progress_cb and (i + 1) % 500 == 0:
             progress_cb(i + 1, total, "matching")

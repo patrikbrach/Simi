@@ -18,11 +18,15 @@ def build_result_excel(
     threshold: int,
     label: str = "Match_Value",
     match_cities: list[str] | None = None,
+    extra_b_data: dict[str, list] | None = None,
 ) -> bytes:
     result_df = df_a.copy()
     result_df[label] = match_values
     if match_cities is not None:
         result_df["Match_City"] = match_cities
+    if extra_b_data:
+        for col, values in extra_b_data.items():
+            result_df[col] = values
     result_df["Match_Score"] = match_scores
 
     buffer = io.BytesIO()

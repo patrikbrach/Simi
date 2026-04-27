@@ -56,6 +56,7 @@ interface WizardState {
   progress: ProgressState;
   stats: Stats | null;
   error: string;
+  extraColsB: string[];
   uploadingA: boolean;
   uploadingB: boolean;
 }
@@ -72,6 +73,7 @@ type Action =
   | { type: "SET_COL_ID_A"; col: string }
   | { type: "SET_COL_ID_B"; col: string }
   | { type: "SET_COL_LABEL_B"; col: string }
+  | { type: "TOGGLE_EXTRA_COL_B"; col: string }
   | { type: "SET_THRESHOLD"; v: number }
   | { type: "START_JOB"; jobId: string }
   | { type: "PROGRESS"; p: Partial<ProgressState> }
@@ -94,6 +96,7 @@ const initial: WizardState = {
   colIdA: "",
   colIdB: "",
   colLabelB: "",
+  extraColsB: [],
   threshold: 85,
   jobId: "",
   progress: { current: 0, total: 0, stage: "waiting", message: "" },
@@ -135,6 +138,15 @@ function reducer(state: WizardState, action: Action): WizardState {
     case "SET_COL_ID_A":      return { ...state, colIdA: action.col };
     case "SET_COL_ID_B":      return { ...state, colIdB: action.col };
     case "SET_COL_LABEL_B":   return { ...state, colLabelB: action.col };
+    case "TOGGLE_EXTRA_COL_B": {
+      const already = state.extraColsB.includes(action.col);
+      return {
+        ...state,
+        extraColsB: already
+          ? state.extraColsB.filter((c) => c !== action.col)
+          : [...state.extraColsB, action.col],
+      };
+    }
     case "SET_THRESHOLD":     return { ...state, threshold: action.v };
     case "START_JOB":         return { ...state, step: "running", jobId: action.jobId };
     case "PROGRESS":          return { ...state, progress: { ...state.progress, ...action.p } };
@@ -313,6 +325,7 @@ export default function MatchWizard({ mode }: { mode: Mode }) {
         column_a: state.colA,
         column_b: state.colB,
         threshold: state.threshold,
+        extra_cols_b: state.extraColsB,
       };
     } else if (mode === "city") {
       body = {
@@ -324,6 +337,7 @@ export default function MatchWizard({ mode }: { mode: Mode }) {
         col_city_a: state.colCityA,
         col_city_b: state.colCityB,
         threshold: state.threshold,
+        extra_cols_b: state.extraColsB,
       };
     } else {
       body = {
@@ -333,6 +347,7 @@ export default function MatchWizard({ mode }: { mode: Mode }) {
         col_id_a: state.colIdA,
         col_id_b: state.colIdB,
         col_label_b: state.colLabelB,
+        extra_cols_b: state.extraColsB,
       };
     }
 
@@ -476,6 +491,39 @@ export default function MatchWizard({ mode }: { mode: Mode }) {
       {state.step === "configure" && state.fileA && state.fileB && (
         <div className="space-y-6">
           <FileCard info={state.fileB}>{ColsFileB(state.fileB.columns)}</FileCard>
+
+          {/* Extra columns from File B */}
+          {(() => {
+            const usedCols = new Set(
+              mode === "name" ? [state.colB]
+              : mode === "city" ? [state.colNameB, state.colCityB]
+              : [state.colIdB, state.colLabelB]
+            );
+            const available = state.fileB!.columns.filter((c) => !usedCols.has(c));
+            if (available.length === 0) return null;
+            return (
+              <div className="bg-surface border border-border rounded-xl p-5">
+                <p className="font-mono text-sm text-text-primary mb-3">
+                  Also include from File B <span className="text-text-secondary">(optional)</span>
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  {available.map((col) => (
+                    <label key={col} className="flex items-center gap-2 cursor-pointer group">
+                      <input
+                        type="checkbox"
+                        checked={state.extraColsB.includes(col)}
+                        onChange={() => dispatch({ type: "TOGGLE_EXTRA_COL_B", col })}
+                        className="accent-amber-500 w-4 h-4"
+                      />
+                      <span className="font-mono text-xs text-text-secondary group-hover:text-text-primary transition-colors truncate">
+                        {col}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
 
           {mode !== "id" && (
             <div className="bg-surface border border-border rounded-xl p-5">

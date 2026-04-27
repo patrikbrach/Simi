@@ -59,6 +59,7 @@ class NameMatchRequest(BaseModel):
     threshold: int = 85
     file_a_name: str = ""
     file_b_name: str = ""
+    extra_cols_b: list[str] = []
 
 
 class NameCityMatchRequest(BaseModel):
@@ -71,6 +72,7 @@ class NameCityMatchRequest(BaseModel):
     threshold: int = 85
     file_a_name: str = ""
     file_b_name: str = ""
+    extra_cols_b: list[str] = []
 
 
 class IdMatchRequest(BaseModel):
@@ -81,6 +83,7 @@ class IdMatchRequest(BaseModel):
     col_label_b: str  # column from B to use as the matched value label
     file_a_name: str = ""
     file_b_name: str = ""
+    extra_cols_b: list[str] = []
 
 
 class StartResponse(BaseModel):
@@ -99,6 +102,21 @@ def _send(job: Job, event_dict: dict) -> None:
 def _ip_hash(request: Request) -> str:
     ip = request.client.host if request.client else "unknown"
     return hashlib.sha256(ip.encode()).hexdigest()
+
+
+def _extract_extra_cols(
+    df_b, indices: list[int], cols: list[str]
+) -> dict[str, list] | None:
+    if not cols:
+        return None
+    result = {}
+    for col in cols:
+        if col in df_b.columns:
+            result[col] = [
+                str(df_b[col].iloc[idx]) if idx >= 0 else ""
+                for idx in indices
+            ]
+    return result or None
 
 
 def _log_run(use_case: str, data: dict) -> None:
@@ -124,12 +142,15 @@ def _finish(
     req_meta: dict,
     label: str = "Match_Value",
     match_cities: list[str] | None = None,
+    extra_b_data: dict[str, list] | None = None,
 ) -> None:
     above = sum(1 for s in match_scores if s >= threshold)
     avg = sum(match_scores) / len(match_scores) if match_scores else 0.0
     exact = sum(1 for s in match_scores if s == 100)
 
-    job.result_bytes = build_result_excel(df_a, match_values, match_scores, threshold, label, match_cities)
+    job.result_bytes = build_result_excel(
+        df_a, match_values, match_scores, threshold, label, match_cities, extra_b_data
+    )
     job.result_filename = result_filename()
     job.status = JobStatus.complete
 
@@ -185,6 +206,7 @@ async def _run_name_match(job: Job, req: NameMatchRequest, ip_hash: str) -> None
             {"file_a_rows": len(df_a), "file_b_rows": len(df_b),
              "file_a_name": req.file_a_name, "file_b_name": req.file_b_name,
              "client_ip_hash": ip_hash},
+            extra_b_data=_extract_extra_cols(df_b, [r[2] for r in results], req.extra_cols_b),
         )
     except Exception as exc:
         job.status = JobStatus.error
@@ -232,6 +254,7 @@ async def _run_name_city_match(job: Job, req: NameCityMatchRequest, ip_hash: str
              "client_ip_hash": ip_hash},
             label="Match_Name",
             match_cities=[r[1] for r in results],
+            extra_b_data=_extract_extra_cols(df_b, [r[3] for r in results], req.extra_cols_b),
         )
     except Exception as exc:
         job.status = JobStatus.error
@@ -277,6 +300,7 @@ async def _run_id_match(job: Job, req: IdMatchRequest, ip_hash: str) -> None:
             {"file_a_rows": len(df_a), "file_b_rows": len(df_b),
              "file_a_name": req.file_a_name, "file_b_name": req.file_b_name,
              "client_ip_hash": ip_hash},
+            extra_b_data=_extract_extra_cols(df_b, [r[2] for r in results], req.extra_cols_b),
         )
     except Exception as exc:
         job.status = JobStatus.error
