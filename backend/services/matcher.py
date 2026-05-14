@@ -21,17 +21,6 @@ NAME_WEIGHT = 0.75
 CITY_WEIGHT = 0.25
 
 
-def _strip_city_tokens(norm_name: str, *norm_cities: str) -> str:
-    """Remove city tokens from a business name to avoid penalising city-in-name datasets."""
-    city_tokens: set[str] = set()
-    for c in norm_cities:
-        city_tokens.update(c.split())
-    if not city_tokens:
-        return norm_name
-    cleaned = [t for t in norm_name.split() if t not in city_tokens]
-    return " ".join(cleaned) if cleaned else norm_name
-
-
 def _build_tfidf(values_b: list[str]) -> tuple[TfidfVectorizer, np.ndarray]:
     vectorizer = TfidfVectorizer(
         analyzer="char_wb",
@@ -134,17 +123,11 @@ def _match_names_city_sync(
     norm_cities_a = [normalize(v) for v in cities_a]
     norm_cities_b = [normalize(v) for v in cities_b]
 
-    # Pre-strip each name's own city so the TF-IDF index is city-agnostic
-    clean_names_b = [
-        _strip_city_tokens(n, c)
-        for n, c in zip(norm_names_b, norm_cities_b)
-    ]
-
     if progress_cb:
         progress_cb(0, len(names_a), "building_index")
 
-    # TF-IDF index built on city-stripped names (city used only during re-ranking)
-    vectorizer, matrix_b = _build_tfidf(clean_names_b)
+    # TF-IDF index built on names only (city used only during re-ranking)
+    vectorizer, matrix_b = _build_tfidf(norm_names_b)
 
     if progress_cb:
         progress_cb(0, len(names_a), "matching")
@@ -155,9 +138,7 @@ def _match_names_city_sync(
         if not norm_name:
             results.append(("", "", 0, -1))
         else:
-            # Strip this row's own city before querying the index
-            clean_name_a = _strip_city_tokens(norm_name, norm_cities_a[i])
-            vec_a = vectorizer.transform([clean_name_a])
+            vec_a = vectorizer.transform([norm_name])
             sims = cosine_similarity(vec_a, matrix_b).flatten()
             k = min(TOP_N, len(sims))
             top_indices = np.argpartition(sims, -k)[-k:]
@@ -167,10 +148,10 @@ def _match_names_city_sync(
             best_score = 0
             best_idx = -1
             for idx in top_indices:
-                # Strip both cities from both names so either side can embed the city
-                cn_a = _strip_city_tokens(norm_name, norm_cities_a[i], norm_cities_b[idx])
-                cn_b = _strip_city_tokens(norm_names_b[idx], norm_cities_b[idx], norm_cities_a[i])
-                name_score = fuzz.token_sort_ratio(cn_a, cn_b)
+                name_score = max(
+                    fuzz.token_sort_ratio(norm_name, norm_names_b[idx]),
+                    fuzz.partial_ratio(norm_name, norm_names_b[idx]),
+                )
                 city_score = fuzz.ratio(norm_cities_a[i], norm_cities_b[idx])
                 combined = round(NAME_WEIGHT * name_score + CITY_WEIGHT * city_score)
                 if combined > best_score:
