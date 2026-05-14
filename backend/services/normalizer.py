@@ -4,6 +4,7 @@ import unicodedata
 STOPWORDS = {
     "the", "a", "an",
     "och", "ab", "hb", "kb", "inc", "ltd", "group", "&",
+    "restaurang", "restaurant",
 }
 
 _PUNCT_RE = re.compile(r"[^\w\s]", re.UNICODE)
