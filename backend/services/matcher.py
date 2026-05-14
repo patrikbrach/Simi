@@ -21,6 +21,19 @@ NAME_WEIGHT = 0.75
 CITY_WEIGHT = 0.25
 
 
+def _prefix_ratio(a: str, b: str) -> int:
+    """Compare shorter string against the first len(shorter) chars of the longer.
+
+    Catches the pattern where extra words are appended to a name (city, company
+    suffix) without being fooled by shared suffixes like location names.
+    """
+    if not a or not b:
+        return 0
+    if len(a) > len(b):
+        a, b = b, a
+    return round(fuzz.ratio(a, b[:len(a)]))
+
+
 def _build_tfidf(values_b: list[str]) -> tuple[TfidfVectorizer, np.ndarray]:
     vectorizer = TfidfVectorizer(
         analyzer="char_wb",
@@ -153,7 +166,7 @@ def _match_names_city_sync(
                 # appended), but only when both strings are long enough to avoid spurious
                 # substring hits on very short normalised names like "far" inside "farang".
                 if min(len(norm_name), len(norm_names_b[idx])) >= 6:
-                    name_score = max(_tsr, fuzz.partial_ratio(norm_name, norm_names_b[idx]))
+                    name_score = max(_tsr, _prefix_ratio(norm_name, norm_names_b[idx]))
                 else:
                     name_score = _tsr
                 city_score = fuzz.ratio(norm_cities_a[i], norm_cities_b[idx])
