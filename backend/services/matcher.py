@@ -148,10 +148,14 @@ def _match_names_city_sync(
             best_score = 0
             best_idx = -1
             for idx in top_indices:
-                name_score = max(
-                    fuzz.token_sort_ratio(norm_name, norm_names_b[idx]),
-                    fuzz.partial_ratio(norm_name, norm_names_b[idx]),
-                )
+                _tsr = fuzz.token_sort_ratio(norm_name, norm_names_b[idx])
+                # partial_ratio boosts scores when one name has extra tokens (e.g. city
+                # appended), but only when both strings are long enough to avoid spurious
+                # substring hits on very short normalised names like "far" inside "farang".
+                if min(len(norm_name), len(norm_names_b[idx])) >= 6:
+                    name_score = max(_tsr, fuzz.partial_ratio(norm_name, norm_names_b[idx]))
+                else:
+                    name_score = _tsr
                 city_score = fuzz.ratio(norm_cities_a[i], norm_cities_b[idx])
                 combined = round(NAME_WEIGHT * name_score + CITY_WEIGHT * city_score)
                 if combined > best_score:
