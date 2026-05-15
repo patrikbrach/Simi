@@ -12,6 +12,7 @@ import hashlib
 import json
 import time
 import uuid
+from collections import Counter
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -131,6 +132,17 @@ def _log_run(use_case: str, data: dict) -> None:
         db.close()
 
 
+def _compute_duplicate_flags(results: list, threshold: int) -> list[bool]:
+    """Flag rows where multiple above-threshold leads share the same CRM row index."""
+    idx_counts = Counter(
+        r[-1] for r in results if r[-2] >= threshold and r[-1] >= 0
+    )
+    return [
+        idx_counts.get(r[-1], 0) > 1 and r[-1] >= 0 and r[-2] >= threshold
+        for r in results
+    ]
+
+
 def _finish(
     job: Job,
     df_a,
@@ -143,13 +155,15 @@ def _finish(
     label: str = "Match_Value",
     match_cities: list[str] | None = None,
     extra_b_data: dict[str, list] | None = None,
+    duplicate_flags: list[bool] | None = None,
 ) -> None:
     above = sum(1 for s in match_scores if s >= threshold)
     avg = sum(match_scores) / len(match_scores) if match_scores else 0.0
     exact = sum(1 for s in match_scores if s == 100)
 
     job.result_bytes = build_result_excel(
-        df_a, match_values, match_scores, threshold, label, match_cities, extra_b_data
+        df_a, match_values, match_scores, threshold, label, match_cities,
+        extra_b_data, duplicate_flags,
     )
     job.result_filename = result_filename()
     job.status = JobStatus.complete
@@ -207,6 +221,7 @@ async def _run_name_match(job: Job, req: NameMatchRequest, ip_hash: str) -> None
              "file_a_name": req.file_a_name, "file_b_name": req.file_b_name,
              "client_ip_hash": ip_hash},
             extra_b_data=_extract_extra_cols(df_b, [r[2] for r in results], req.extra_cols_b),
+            duplicate_flags=_compute_duplicate_flags(results, req.threshold),
         )
     except Exception as exc:
         job.status = JobStatus.error
@@ -255,6 +270,7 @@ async def _run_name_city_match(job: Job, req: NameCityMatchRequest, ip_hash: str
             label="Match_Name",
             match_cities=[r[1] for r in results],
             extra_b_data=_extract_extra_cols(df_b, [r[3] for r in results], req.extra_cols_b),
+            duplicate_flags=_compute_duplicate_flags(results, req.threshold),
         )
     except Exception as exc:
         job.status = JobStatus.error
@@ -301,6 +317,7 @@ async def _run_id_match(job: Job, req: IdMatchRequest, ip_hash: str) -> None:
              "file_a_name": req.file_a_name, "file_b_name": req.file_b_name,
              "client_ip_hash": ip_hash},
             extra_b_data=_extract_extra_cols(df_b, [r[2] for r in results], req.extra_cols_b),
+            duplicate_flags=_compute_duplicate_flags(results, 100),
         )
     except Exception as exc:
         job.status = JobStatus.error

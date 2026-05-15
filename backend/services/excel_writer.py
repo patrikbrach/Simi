@@ -9,6 +9,7 @@ from openpyxl.styles import PatternFill
 from openpyxl.utils import get_column_letter
 
 _LOW_SCORE_FILL = PatternFill(start_color="FECACA", end_color="FECACA", fill_type="solid")
+_DUPLICATE_FILL = PatternFill(start_color="FED7AA", end_color="FED7AA", fill_type="solid")
 
 
 def build_result_excel(
@@ -19,6 +20,7 @@ def build_result_excel(
     label: str = "Match_Value",
     match_cities: list[str] | None = None,
     extra_b_data: dict[str, list] | None = None,
+    duplicate_flags: list[bool] | None = None,
 ) -> bytes:
     result_df = df_a.copy()
     result_df[label] = match_values
@@ -27,6 +29,8 @@ def build_result_excel(
     if extra_b_data:
         for col, values in extra_b_data.items():
             result_df[col] = values
+    if duplicate_flags is not None:
+        result_df["Duplicate_Match"] = ["Yes" if f else "" for f in duplicate_flags]
     result_df["Match_Score"] = match_scores
 
     buffer = io.BytesIO()
@@ -41,9 +45,11 @@ def build_result_excel(
             ws[f"{score_col_letter}{r}"].number_format = "0"
 
         for row_num, score in enumerate(match_scores, start=2):  # row 1 = header
+            cell = ws[f"{score_col_letter}{row_num}"]
             if score < threshold:
-                cell = ws[f"{score_col_letter}{row_num}"]
                 cell.fill = _LOW_SCORE_FILL
+            elif duplicate_flags and duplicate_flags[row_num - 2]:
+                cell.fill = _DUPLICATE_FILL
 
     return buffer.getvalue()
 
