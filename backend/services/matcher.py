@@ -21,21 +21,17 @@ NAME_WEIGHT = 0.75
 CITY_WEIGHT = 0.25
 
 
-def _sorted_prefix_ratio(a: str, b: str) -> int:
-    """Token-sort both strings, then compare the shorter against the prefix of the longer.
+def _prefix_ratio(a: str, b: str) -> int:
+    """Compare shorter string against the first len(shorter) chars of the longer.
 
-    Handles two patterns at once:
-    - Extra words appended (city, company suffix): shorter sorts to a prefix of longer
-    - Reversed word order: "Hotell Frykenstrand" vs "Frykenstrand Hotell Konferens"
-      both sort to "frykenstrand hotell …" so the prefix aligns correctly.
+    Catches the pattern where extra words are appended to a name (city, company
+    suffix) without being fooled by shared suffixes like location names.
     """
     if not a or not b:
         return 0
-    sa = " ".join(sorted(a.split()))
-    sb = " ".join(sorted(b.split()))
-    if len(sa) > len(sb):
-        sa, sb = sb, sa
-    return round(fuzz.ratio(sa, sb[:len(sa)]))
+    if len(a) > len(b):
+        a, b = b, a
+    return round(fuzz.ratio(a, b[:len(a)]))
 
 
 def _build_tfidf(values_b: list[str]) -> tuple[TfidfVectorizer, np.ndarray]:
@@ -170,7 +166,7 @@ def _match_names_city_sync(
                 # appended), but only when both strings are long enough to avoid spurious
                 # substring hits on very short normalised names like "far" inside "farang".
                 if min(len(norm_name), len(norm_names_b[idx])) >= 6:
-                    name_score = max(_tsr, _sorted_prefix_ratio(norm_name, norm_names_b[idx]))
+                    name_score = max(_tsr, _prefix_ratio(norm_name, norm_names_b[idx]))
                 else:
                     name_score = _tsr
                 city_score = fuzz.ratio(norm_cities_a[i], norm_cities_b[idx])
